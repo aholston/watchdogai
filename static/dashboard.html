@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WatchDogAI - Log Analysis Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.0/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .severity-high { border-left: 4px solid #dc3545; background-color: #f8d7da; }
+        .severity-medium { border-left: 4px solid #ffc107; background-color: #fff3cd; }
+        .severity-low { border-left: 4px solid #198754; background-color: #d1e7dd; }
+        .log-entry { font-family: 'Courier New', monospace; font-size: 0.9em; }
+        .upload-area { 
+            border: 2px dashed #6c757d; 
+            border-radius: 10px; 
+            padding: 40px; 
+            text-align: center; 
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .upload-area:hover { border-color: #0d6efd; background-color: #f8f9fa; }
+        .upload-area.dragover { border-color: #0d6efd; background-color: #e7f3ff; }
+        .status-indicator { 
+            width: 12px; 
+            height: 12px; 
+            border-radius: 50%; 
+            display: inline-block; 
+            margin-right: 8px;
+        }
+        .status-ready { background-color: #28a745; }
+        .status-error { background-color: #dc3545; }
+        .analysis-card { transition: all 0.3s ease; }
+        .analysis-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .confidence-bar {
+            background: linear-gradient(90deg, #dc3545, #ffc107, #28a745);
+            height: 4px;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">
+                <i class="fas fa-shield-alt"></i> WatchDogAI
+                <small class="text-muted ms-2">Intelligent Log Analysis</small>
+            </span>
+            <div id="status-indicator" class="d-flex align-items-center">
+                <span class="status-indicator status-error" id="status-dot"></span>
+                <span id="status-text">Connecting...</span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-tachometer-alt"></i> System Status</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="system-stats">
+                            <div class="mb-2">
+                                <strong>LLM Provider:</strong> <span id="llm-provider">-</span>
+                            </div>
+                            <div class="mb-2">
+                                <strong>Model:</strong> <span id="llm-model">-</span>
+                            </div>
+                            <div class="mb-2">
+                                <strong>Total Logs:</strong> <span id="total-logs">-</span>
+                            </div>
+                            <div class="mb-2">
+                                <strong>Database:</strong> <span id="vector-db">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5><i class="fas fa-search"></i> Search Logs</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="input-group mb-3">
+                            <input type="text" class="form-control" id="search-query" placeholder="Search query...">
+                            <button class="btn btn-outline-primary" type="button" id="search-btn">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                        <div id="search-results" style="max-height: 300px; overflow-y: auto;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="col-md-9">
+                <!-- Upload Section -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5><i class="fas fa-upload"></i> Upload Log File</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="upload-area" id="upload-area">
+                            <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-3"></i>
+                            <h5>Drop your log file here or click to browse</h5>
+                            <p class="text-muted">Supports .txt, .log, .json, .csv files (max 16MB)</p>
+                            <input type="file" id="file-input" class="d-none" accept=".txt,.log,.json,.csv">
+                        </div>
+                        <div id="upload-progress" class="mt-3 d-none">
+                            <div class="progress">
+                                <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div id="upload-result" class="mt-3"></div>
+                    </div>
+                </div>
+
+                <!-- Analysis Results -->
+                <div id="analysis-section" class="d-none">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5><i class="fas fa-chart-line"></i> Analysis Results</h5>
+                            <button class="btn btn-sm btn-outline-primary" id="generate-report-btn">
+                                <i class="fas fa-file-alt"></i> Generate Report
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div id="analysis-summary" class="mb-4"></div>
+                            <div id="analysis-results"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Interactive Analysis -->
+                <div class="card mt-4">
+                    <div class="card-header">
+                        <h5><i class="fas fa-robot"></i> Interactive Analysis</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="input-group mb-3">
+                            <input type="text" class="form-control" id="analysis-query" 
+                                   placeholder="Ask about your logs: 'failed login attempts', 'database errors', etc.">
+                            <button class="btn btn-primary" type="button" id="analyze-btn">
+                                <i class="fas fa-brain"></i> Analyze
+                            </button>
+                        </div>
+                        <div id="interactive-results"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Report Modal -->
+    <div class="modal fade" id="reportModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Comprehensive Security Report</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="report-content">Loading...</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="download-report-btn">
+                        <i class="fas fa-download"></i> Download
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Configuration
+        const API_BASE = 'http://localhost:5001/api';
+        
+        // DOM elements
+        const uploadArea = document.getElementById('upload-area');
+        const fileInput = document.getElementById('file-input');
+        const uploadProgress = document.getElementById('upload-progress');
+        const uploadResult = document.getElementById('upload-result');
+        const analysisSection = document.getElementById('analysis-section');
+        const searchBtn = document.getElementById('search-btn');
+        const searchQuery = document.getElementById('search-query');
+        const analyzeBtn = document.getElementById('analyze-btn');
+        const analysisQuery = document.getElementById('analysis-query');
+        const generateReportBtn = document.getElementById('generate-report-btn');
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            checkSystemStatus();
+            setupEventListeners();
+        });
+
+        async function checkSystemStatus() {
+            try {
+                const response = await axios.get(`${API_BASE}/status`);
+                const data = response.data;
+                
+                document.getElementById('status-dot').className = 'status-indicator status-ready';
+                document.getElementById('status-text').textContent = 'Connected';
+                document.getElementById('llm-provider').textContent = data.llm_provider;
+                document.getElementById('llm-model').textContent = data.llm_model;
+                document.getElementById('total-logs').textContent = data.total_logs.toLocaleString();
+                document.getElementById('vector-db').textContent = data.vector_db;
+            } catch (error) {
+                document.getElementById('status-dot').className = 'status-indicator status-error';
+                document.getElementById('status-text').textContent = 'Connection Error';
+                console.error('Status check failed:', error);
+            }
+        }
+
+        function setupEventListeners() {
+            // File upload
+            uploadArea.addEventListener('click', () => fileInput.click());
+            uploadArea.addEventListener('dragover', handleDragOver);
+            uploadArea.addEventListener('drop', handleDrop);
+            fileInput.addEventListener('change', handleFileSelect);
+
+            // Search
+            searchBtn.addEventListener('click', performSearch);
+            searchQuery.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') performSearch();
+            });
+
+            // Interactive analysis
+            analyzeBtn.addEventListener('click', performAnalysis);
+            analysisQuery.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') performAnalysis();
+            });
+
+            // Report generation
+            generateReportBtn.addEventListener('click', generateReport);
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                processFile(files[0]);
+            }
+        }
+
+        function handleFileSelect(e) {
+            const files = e.target.files;
+            if (files.length > 0) {
+                processFile(files[0]);
+            }
+        }
+
+        async function processFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                // Show upload progress
+                uploadProgress.classList.remove('d-none');
+                uploadResult.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="fas fa-upload fa-spin"></i> 
+                        Uploading <strong>${file.name}</strong>...
+                    </div>
+                `;
+                
+                // Upload file
+                const uploadResponse = await axios.post(`${API_BASE}/upload`, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
+
+                const { filepath, filename, size } = uploadResponse.data;
+                
+                // Show analysis progress
+                uploadResult.innerHTML = `
+                    <div class="alert alert-warning">
+                        <div class="d-flex align-items-center">
+                            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                            <div>
+                                <strong>Analyzing ${filename}...</strong><br>
+                                <small>🤖 Claude AI is examining your logs for security patterns...</small>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                // Analyze file
+                const analysisResponse = await axios.post(`${API_BASE}/analyze`, { filepath });
+                const analysisData = analysisResponse.data;
+
+                displayAnalysisResults(analysisData);
+                
+                uploadResult.innerHTML = `
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle"></i> 
+                        Successfully analyzed <strong>${filename}</strong> 
+                        (${(size/1024).toFixed(1)} KB, ${analysisData.total_logs} log entries)
+                    </div>
+                `;
+
+            } catch (error) {
+                uploadResult.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle"></i> 
+                        Error: ${error.response?.data?.error || error.message}
+                    </div>
+                `;
+            } finally {
+                uploadProgress.classList.add('d-none');
+            }
+        }
+
+        function displayAnalysisResults(data) {
+            const { analyses, filename, total_logs } = data;
+            
+            // Summary
+            const highSeverity = analyses.filter(a => a.severity === 'high').length;
+            const mediumSeverity = analyses.filter(a => a.severity === 'medium').length;
+            
+            document.getElementById('analysis-summary').innerHTML = `
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="card text-center ${highSeverity > 0 ? 'border-danger' : ''}">
+                            <div class="card-body">
+                                <h2 class="text-danger">${highSeverity}</h2>
+                                <p class="mb-0">High Severity</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card text-center ${mediumSeverity > 0 ? 'border-warning' : ''}">
+                            <div class="card-body">
+                                <h2 class="text-warning">${mediumSeverity}</h2>
+                                <p class="mb-0">Medium Severity</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h2 class="text-info">${total_logs}</h2>
+                                <p class="mb-0">Total Logs</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Individual results
+            const resultsHtml = analyses.map(analysis => `
+                <div class="card analysis-card mb-3 severity-${analysis.severity}">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h6 class="card-title">${analysis.category} Analysis</h6>
+                            <span class="badge bg-${getSeverityColor(analysis.severity)} rounded-pill">
+                                ${analysis.severity.toUpperCase()}
+                            </span>
+                        </div>
+                        <h5 class="mb-3">${analysis.issue}</h5>
+                        <div class="mb-2">
+                            <strong>Confidence:</strong> ${(analysis.confidence * 100).toFixed(0)}%
+                            <div class="confidence-bar mt-1" style="width: ${analysis.confidence * 100}%"></div>
+                        </div>
+                        <div class="mb-2">
+                            <strong>Timeline:</strong> ${analysis.timeline}
+                        </div>
+                        ${analysis.affected_systems.length > 0 ? `
+                            <div class="mb-2">
+                                <strong>Affected Systems:</strong> ${analysis.affected_systems.join(', ')}
+                            </div>
+                        ` : ''}
+                        <div class="mt-3">
+                            <strong>Recommendation:</strong>
+                            <p class="mb-0 text-muted">${analysis.recommendation}</p>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            document.getElementById('analysis-results').innerHTML = resultsHtml || 
+                '<div class="alert alert-info"><i class="fas fa-info-circle"></i> No significant issues detected.</div>';
+            
+            analysisSection.classList.remove('d-none');
+            checkSystemStatus(); // Refresh stats
+        }
+
+        async function performSearch() {
+            const query = searchQuery.value.trim();
+            if (!query) return;
+
+            try {
+                const response = await axios.post(`${API_BASE}/search`, { 
+                    query, 
+                    limit: 10 
+                });
+                
+                const results = response.data.results;
+                const resultsHtml = results.map(result => `
+                    <div class="border-bottom py-2">
+                        <div class="log-entry">${result.document}</div>
+                        <small class="text-muted">
+                            Similarity: ${(result.similarity * 100).toFixed(1)}% | 
+                            ${result.timestamp}
+                        </small>
+                    </div>
+                `).join('');
+
+                document.getElementById('search-results').innerHTML = resultsHtml || 
+                    '<div class="text-muted">No results found</div>';
+                    
+            } catch (error) {
+                document.getElementById('search-results').innerHTML = 
+                    `<div class="text-danger">Error: ${error.response?.data?.error || error.message}</div>`;
+            }
+        }
+
+        async function performAnalysis() {
+            const query = analysisQuery.value.trim();
+            if (!query) return;
+
+            // Show loading indicator
+            document.getElementById('interactive-results').innerHTML = `
+                <div class="alert alert-info">
+                    <div class="d-flex align-items-center">
+                        <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                        <div>
+                            <strong>Analyzing query...</strong><br>
+                            <small>🤖 Claude AI is processing your request...</small>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            try {
+                const response = await axios.post(`${API_BASE}/analyze-query`, { 
+                    query,
+                    context: 'Interactive dashboard query'
+                });
+                
+                const result = response.data;
+                const resultHtml = `
+                    <div class="card severity-${result.severity}">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <h6 class="card-title">Analysis Result</h6>
+                                <span class="badge bg-${getSeverityColor(result.severity)} rounded-pill">
+                                    ${result.severity.toUpperCase()}
+                                </span>
+                            </div>
+                            <h5 class="mb-3">${result.issue}</h5>
+                            <div class="mb-2">
+                                <strong>Confidence:</strong> ${(result.confidence * 100).toFixed(0)}%
+                            </div>
+                            <div class="mb-2">
+                                <strong>Category:</strong> ${result.category}
+                            </div>
+                            <div class="mt-3">
+                                <strong>Recommendation:</strong>
+                                <p class="mb-0 text-muted">${result.recommendation}</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                document.getElementById('interactive-results').innerHTML = resultHtml;
+                
+            } catch (error) {
+                document.getElementById('interactive-results').innerHTML = 
+                    `<div class="alert alert-danger">Error: ${error.response?.data?.error || error.message}</div>`;
+            }
+        }
+
+        async function generateReport() {
+            // Show loading in modal immediately
+            document.getElementById('report-content').innerHTML = `
+                <div class="text-center py-4">
+                    <div class="spinner-border text-primary mb-3" role="status"></div>
+                    <h5>Generating Comprehensive Report...</h5>
+                    <p class="text-muted">🤖 Claude AI is analyzing all categories of security incidents...</p>
+                </div>
+            `;
+            
+            // Show modal with loading state
+            new bootstrap.Modal(document.getElementById('reportModal')).show();
+            
+            try {
+                const response = await axios.get(`${API_BASE}/report`);
+                const reportData = response.data;
+                
+                const reportHtml = `
+                    <h6>Report Generated: ${new Date(reportData.timestamp).toLocaleString()}</h6>
+                    <p><strong>Total Logs Analyzed:</strong> ${reportData.total_logs.toLocaleString()}</p>
+                    
+                    ${reportData.categories.map(category => `
+                        <h5 class="mt-4">${category.name}</h5>
+                        ${category.results.map(result => `
+                            <div class="card mb-2 severity-${result.severity}">
+                                <div class="card-body py-2">
+                                    <h6>${result.issue}</h6>
+                                    <small class="text-muted">
+                                        Severity: ${result.severity} | 
+                                        Confidence: ${(result.confidence * 100).toFixed(0)}%
+                                    </small>
+                                    <p class="mb-0 mt-1">${result.recommendation}</p>
+                                </div>
+                            </div>
+                        `).join('')}
+                    `).join('')}
+                `;
+                
+                document.getElementById('report-content').innerHTML = reportHtml;
+                
+            } catch (error) {
+                document.getElementById('report-content').innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        Error generating report: ${error.response?.data?.error || error.message}
+                    </div>
+                `;
+            }
+        }
+
+        function getSeverityColor(severity) {
+            switch(severity) {
+                case 'high': return 'danger';
+                case 'medium': return 'warning';
+                case 'low': return 'success';
+                default: return 'secondary';
+            }
+        }
+    </script>
+</body>
+</html>
