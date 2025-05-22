@@ -1,0 +1,23 @@
+# Core dependencies
+langchain==0.1.0
+langchain-openai==0.0.5
+openai==1.10.0
+
+# Vector database
+faiss-cpu==1.7.4
+
+# Data processing
+pandas==2.1.4
+numpy==1.26.3
+
+# Configuration
+python-dotenv==1.0.0
+pyyaml==6.0.1
+
+# Utilities
+python-dateutil==2.8.2
+pydantic==2.5.3
+
+# Development
+pytest==7.4.4
+black==23.12.1
